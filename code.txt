@@ -1,0 +1,227 @@
+/*
+ * File:   main.c
+ * Author: m
+ *
+ * Created on 27 ?????? 2016 ?., 19:58
+ */
+
+// PIC16LF1823 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1
+#pragma config FOSC = INTOSC       // Oscillator Selection (ECH, External Clock, High Power Mode (4-32 MHz): device clock supplied to CLKIN pin)
+#pragma config WDTE = ON        // Watchdog Timer Enable (WDT enabled)
+#pragma config PWRTE = OFF      // Power-up Timer Enable (PWRT disabled)
+#pragma config MCLRE = ON       // MCLR Pin Function Select (MCLR/VPP pin function is MCLR)
+#pragma config CP = OFF         // Flash Program Memory Code Protection (Program memory code protection is disabled)
+#pragma config CPD = OFF        // Data Memory Code Protection (Data memory code protection is disabled)
+#pragma config BOREN = ON       // Brown-out Reset Enable (Brown-out Reset enabled)
+#pragma config CLKOUTEN = OFF   // Clock Out Enable (CLKOUT function is disabled. I/O or oscillator function on the CLKOUT pin)
+#pragma config IESO = ON        // Internal/External Switchover (Internal/External Switchover mode is enabled)
+#pragma config FCMEN = ON       // Fail-Safe Clock Monitor Enable (Fail-Safe Clock Monitor is enabled)
+
+// CONFIG2
+#pragma config WRT = OFF        // Flash Memory Self-Write Protection (Write protection off)
+#pragma config PLLEN = ON       // PLL Enable (4x PLL enabled)
+#pragma config STVREN = ON      // Stack Overflow/Underflow Reset Enable (Stack Overflow or Underflow will cause a Reset)
+#pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
+#pragma config LVP = ON         // Low-Voltage Programming Enable (Low-voltage programming enabled)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
+
+#include <xc.h>
+
+void delay(void);
+void putch(char data);
+void init_interrupts(void);
+void init_pins(void);
+void init_osc(void);
+void init_timers(void);
+
+void init_spi(void);
+void handle_spi(void);
+unsigned char read_spi(void);
+void write_spi(unsigned char x);
+void write_spi_string(unsigned char a[], int len);
+const unsigned int SPI_INPUT_BUFFER_SIZE = 16;
+const unsigned int SPI_OUTPUT_BUFFER_SIZE = 16;
+unsigned char SPI_INPUT_BUFFER[16];
+unsigned char SPI_OUTPUT_BUFFER[16];
+unsigned int SPI_INPUT_BUFFER_POS = 0;
+unsigned int SPI_OUTPUT_BUFFER_POS = 0;
+
+const unsigned int UART1_INPUT_BUFFER_SIZE = 16;
+unsigned char UART1_INPUT_BUFFER[16];
+unsigned int UART1_INPUT_BUFFER_POS = 0;
+unsigned char UART1_IS_GOT = 0;
+unsigned char UART1_LAST_COMMAND[16];
+void init_uart(void);
+void handle_uart(void);
+
+unsigned int ctr = 0;
+unsigned int delayVal = 2048;
+
+int main(void)
+{
+    init_osc();
+    init_pins();
+    init_timers();
+    init_interrupts();
+    init_spi();
+    init_uart();
+    
+    //write_spi_string("123\0", 4);
+    //RCREG = 0xAC;
+    
+    while(1)
+    {
+        continue;
+    }
+    
+}
+
+void delay(void)
+{
+    unsigned int i,j;
+
+    for (i = 0; i < delayVal; i++)
+    {
+        for (j = 0; j < 20; j++);
+    }
+}
+
+void putch(char data) {
+ while( ! TXIF) // check buffer
+ continue; // wait till ready
+ TXREG = data; // send data
+}
+
+void interrupt interrupt_handler(void) {
+    static unsigned int TIMER0_DIV = 5;
+    if (TMR0IE && TMR0IF) { //timer0 overflow
+        
+        TMR0IF = 0;
+        if(TIMER0_DIV != 0) {
+            TIMER0_DIV -= 1;
+        }
+        else {
+            TIMER0_DIV = 5;
+            //LATC ^= 0xFFFF;
+        }
+    }
+    if(PEIE && RCIE && RCIF) { //uart receive
+        RCIF = 0;
+        handle_uart();
+    }
+    if(PEIE && TXIE && TXIF) { //uart transmit
+        TXIF = 0;
+    }
+    if(PEIE && SSP1IE && SSP1IF) { //mssp
+        SSP1IF = 0;
+        handle_spi();
+    }
+}
+
+void init_interrupts(void) {
+    
+    //Timer 0
+    TMR0IE = 1; //first timer overflow
+    
+    //Interfaces
+    PEIE = 1; //perepherial interrupts
+    RCIE = 1; //USART receive
+    //TXIE = 1; //USART transmit
+    SSP1IE = 1; //MSSP
+    
+    GIE = 1; //all interrupts
+}
+
+void init_pins(void) {
+    TRISA = 0xFF02;
+    TRISC = 0xFF0A;
+    //LATC = 0xFF00;
+}
+
+void init_timers(void) {
+    TMR0CS = 0; //internal src Fosc/4
+    PSA = 1; //prescaler to timer0 enabled (now disabled)
+    PS0 = 1;
+    PS1 = 1;
+    PS2 = 1;
+}
+
+void init_osc(void) {
+    SCS0 = 1; //internal source
+    SCS1 = 1;
+}
+
+void init_spi(void) {
+    SSP1CON1bits.SSPM0 = 0; //Fosc/4
+    SSP1CON1bits.SSPM1 = 0;
+    SSP1CON1bits.SSPM2 = 0;
+    SSP1CON1bits.SSPM3 = 0;
+    SSP1CON1bits.SSPEN = 1; //enable SPI
+}
+
+void handle_spi(void) {
+    if(SSP1STATbits.BF) { //smth came to read
+        if(SPI_INPUT_BUFFER_POS < SPI_INPUT_BUFFER_SIZE) {
+            SPI_INPUT_BUFFER[SPI_INPUT_BUFFER_POS] = SSP1BUF;
+            SPI_INPUT_BUFFER_POS++;
+        }
+        else {
+            SPI_INPUT_BUFFER_POS = 0;
+            SPI_INPUT_BUFFER[SPI_INPUT_BUFFER_POS] = SSP1BUF;
+            SPI_INPUT_BUFFER_POS++;
+        }
+    }
+}
+
+unsigned char read_spi(void){
+    return SSP1BUF;
+}
+
+void write_spi(unsigned char x) {
+    while (SSP1IF);
+    while (SSP1STATbits.BF)
+        handle_spi();
+    SSP1BUF = x;
+}
+
+void write_spi_string(unsigned char a[], int len) {
+    for(int i = 0; i < len; i++) {
+        write_spi(a[i]);
+    }
+}
+
+void init_uart(void) {
+    CREN = 1; //enable uart receiver
+    SYNC = 0;
+    SPEN = 1;
+    SPBRGL = 1;
+    SPBRGH = 25;
+}
+
+void handle_uart(void) {
+    if(RCREG == '\n') {
+        int i = 0;
+        for(i = 0; i <= UART1_INPUT_BUFFER_POS; i++) {
+            UART1_INPUT_BUFFER[i] = UART1_LAST_COMMAND[i];
+        }
+        UART1_LAST_COMMAND[i] = 0;
+        UART1_IS_GOT = 1;
+        return;
+    }
+    if(UART1_INPUT_BUFFER_POS < UART1_INPUT_BUFFER_SIZE) {
+        UART1_INPUT_BUFFER[UART1_INPUT_BUFFER_POS] = RCREG;
+        UART1_INPUT_BUFFER_POS++;
+    }
+    else {
+        UART1_INPUT_BUFFER_POS = 0;
+        UART1_INPUT_BUFFER[UART1_INPUT_BUFFER_POS] = RCREG;
+        UART1_INPUT_BUFFER_POS++;
+    }
+}
