@@ -78,8 +78,9 @@ unsigned int CP_COUNT = 0;
 #define COUNTER_RS232 1
 #define COUNTER_RS485 2
 unsigned char DEFAULT_INTERFACE_COUNTER = 0;
-unsigned char CURRENT_INTERFACE_COUNTER = 0;
+unsigned char CURRENT_INTERFACE_COUNTER = 1;
 void set_counter_interface(unsigned char t);
+unsigned char IS_SLAVE_READING = 0;
 
 
 struct LORA_CONF_DATA {
@@ -98,7 +99,7 @@ int main(void)
     init_uart();
     init_cp();
     
-    set_counter_interface(DEFAULT_INTERFACE_COUNTER);
+    set_counter_interface(CURRENT_INTERFACE_COUNTER);
     
     delay();
     //write_spi_string("123\0", 4);
@@ -152,6 +153,9 @@ void interrupt interrupt_handler(void) {
         TXIF = 0;
     }
     if(PEIE && SSP1IE && SSP1IF) { //mssp
+       if((IS_SLAVE_READING == 1) && (CURRENT_INTERFACE_COUNTER == 0)) {
+	  int x = 0;
+	  }
         SSP1IF = 0;
         handle_spi();
     }
@@ -224,8 +228,19 @@ void init_spi(void) {
 
 
 void handle_spi(void) {
-   int x = 0;;
-    if((LATC3 == 0) && (CURRENT_INTERFACE_COUNTER != 0)) {
+   int x = 0;
+    if((IS_SLAVE_READING == 1) && (CURRENT_INTERFACE_COUNTER == 0)) {
+       if(1/*SSP1STATbits.BF*/) {
+	  if(SPI_INPUT_BUFFER_POS2 < SPI_INPUT_BUFFER_SIZE2) {
+		  SPI_INPUT_BUFFER2[SPI_INPUT_BUFFER_POS2] = SSP1BUF;
+		  SPI_INPUT_BUFFER_POS2++;
+	  }
+	  else {
+	      SPI_INPUT_BUFFER_POS2 = 0;
+	      SPI_INPUT_BUFFER1[SPI_INPUT_BUFFER_POS2] = SSP1BUF;
+	      SPI_INPUT_BUFFER_POS1++;
+	  }
+       }
         return;
     }
     if(SSP1STATbits.BF) { //smth came to read
@@ -262,8 +277,9 @@ void init_uart(void) {
     CREN = 1; //enable uart receiver
     SYNC = 0;
     SPEN = 1;
-    SPBRGL = 1;
-    SPBRGH = 25;
+    //BRG16 = 0;
+    SPBRGL = 25;
+    SPBRGH = 0;
 }
 
 void handle_uart(void) {
@@ -326,19 +342,10 @@ void handle_can(void) {
         return;
     }
     LATC3 = 0;
+    IS_SLAVE_READING = 1;
     delay();
     write_spi(0);
-    if(1/*SSP1STATbits.BF*/) {
-       if(SPI_INPUT_BUFFER_POS2 < SPI_INPUT_BUFFER_SIZE2) {
-	       SPI_INPUT_BUFFER2[SPI_INPUT_BUFFER_POS2] = SSP1BUF;
-	       SPI_INPUT_BUFFER_POS2++;
-       }
-       else {
-	   SPI_INPUT_BUFFER_POS2 = 0;
-	   SPI_INPUT_BUFFER1[SPI_INPUT_BUFFER_POS2] = SSP1BUF;
-	   SPI_INPUT_BUFFER_POS1++;
-       }
-    }
     delay();
     LATC3 = 1;
+    IS_SLAVE_READING = 0;
 }
